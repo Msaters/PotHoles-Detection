@@ -1,0 +1,5 @@
+opencv-python
+torch
+kagglehub
+ultralytics
+albumentations

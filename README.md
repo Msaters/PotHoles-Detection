@@ -1,5 +1,9 @@
 # Neural Networks. Theory and Practice. 2026 Project Template
 
+żeby odpalic:
+
+python scripts/train_model.py src/config/potholes_v1.py
+
 A template for training neural networks with [PyTorch Lightning](https://lightning.ai/), [Fiddle](https://github.com/google/fiddle), and [Weights & Biases](https://wandb.ai/).
 
 The purpose of this template is to introduce PyTorch Lightning, Fiddle, and Weights & Biases together and showcase how they interact — not to provide a comprehensive guide to any of them individually. Each tool has far more functionality than is used here; the goal is to give you a working starting point that demonstrates a clean way to combine them.

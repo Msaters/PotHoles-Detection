@@ -3,3 +3,7 @@ torch
 kagglehub
 ultralytics
 albumentations
+opencv-python
+pandas
+lightning
+fiddle

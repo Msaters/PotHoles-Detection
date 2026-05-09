@@ -143,7 +143,7 @@ class PotholeDetectorInference:
         # Result with overlay
         result_rgb = cv2.cvtColor(result, cv2.COLOR_BGR2RGB)
         axes[2].imshow(result_rgb)
-        axes[2].set_title("Predictions (Red=Pothole, Blue=Background)", fontsize=14, fontweight='bold')
+        axes[2].set_title("Predictions (Red=Background, Blue=Pothole)", fontsize=14, fontweight='bold')
         axes[2].axis('off')
         
         # Add legend

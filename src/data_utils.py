@@ -10,9 +10,9 @@ import pandas as pd
 PATH = kagglehub.dataset_download("idanbaru/annotated-potholes-with-severity-levels")
 
 LABEL_MAP = {
-    "minor_pothole": 1,
-    "medium_pothole": 2,
-    "major_pothole": 3
+    "minor_pothole": 0,
+    "medium_pothole": 1,
+    "major_pothole": 2
 }
 
 def parse_xmls(path):
@@ -104,12 +104,9 @@ class PatchPotholeDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx: int):
         img_path = self.images[idx]
         
-        # Load and convert image
         img = cv2.imread(img_path)
         
-        # Handle corrupted/missing images
         if img is None:
-            # Return black image as fallback
             print(f"⚠️  Warning: Cannot read image {img_path}, using black image")
             img = np.zeros((256, 256, 3), dtype=np.uint8)
         else:
@@ -117,36 +114,77 @@ class PatchPotholeDataset(torch.utils.data.Dataset):
         
         orig_h, orig_w = img.shape[:2]
         
-        # Resize image to fixed dimensions
         img_resized = cv2.resize(img, (self.img_size, self.img_size))
         
-        # Normalize and convert to PyTorch tensor (C, H, W)
         img_tensor = torch.from_numpy(img_resized).permute(2, 0, 1).float() / 255.0
 
-        # Create empty grid target (1, grid_size, grid_size) filled with zeros
         target_grid = torch.zeros((1, self.grid_size, self.grid_size), dtype=torch.float32)
         
-        # Get all annotations for this image
         img_data = self.df[self.df["file"] == img_path]
         
-        # Mark grid cells that contain bounding boxes
         for _, row in img_data.iterrows():
-            # Scale bounding box coordinates to resized image
             xmin = int(row['xmin'] * (self.img_size / orig_w))
             ymin = int(row['ymin'] * (self.img_size / orig_h))
             xmax = int(row['xmax'] * (self.img_size / orig_w))
             ymax = int(row['ymax'] * (self.img_size / orig_h))
             
-            # Calculate which grid cells intersect with the bounding box
             grid_xmin = max(0, int(xmin // self.cell_size))
             grid_ymin = max(0, int(ymin // self.cell_size))
             grid_xmax = min(self.grid_size - 1, int(xmax // self.cell_size))
             grid_ymax = min(self.grid_size - 1, int(ymax // self.cell_size))
             
-            # Set 1 in corresponding grid cells
             target_grid[0, grid_ymin:grid_ymax+1, grid_xmin:grid_xmax+1] = 1.0
 
         return img_tensor, target_grid
 
     def __len__(self) -> int:
         return len(self.images)
+    
+class PotholeDatasetYolo(torch.utils.data.Dataset):
+    def __init__(self, df, img_size: int = 640):
+        self.df = df
+        self.images = df['file'].unique()
+        self.img_size = img_size
+    
+    def __len__(self):
+        return len(self.images)
+
+    def __getitem__(self, idx):
+        img_path = self.images[idx]
+
+        img = cv2.imread(img_path)
+        if img is None:
+            img = np.zeros((self.img_size, self.img_size, 3), dtype=np.uint8)
+        else:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+        orig_h, orig_w = img.shape[:2]
+
+        img_resized = cv2.resize(img, (self.img_size, self.img_size))
+        
+        img_data = self.df[self.df["file"] == img_path]
+        yolo_targets = []
+
+        for _, row in img_data.iterrows():
+            xmin, ymin, xmax, ymax = row['xmin'], row['ymin'], row['xmax'], row['ymax']
+
+            dw = 1. / orig_w
+            dh = 1. / orig_h
+            
+            x_center = (xmin + xmax) / 2.0 * dw
+            y_center = (ymin + ymax) / 2.0 * dh
+            w = (xmax - xmin) * dw
+            h = (ymax - ymin) * dh
+            
+            cls_id = float(row['label'])
+
+            yolo_targets.append([cls_id, x_center, y_center, w, h])
+
+        if len(yolo_targets) > 0:
+            target_tensor = torch.as_tensor(yolo_targets, dtype=torch.float32)
+        else:
+            target_tensor = torch.zeros((0, 5), dtype=torch.float32)
+
+        img_tensor = torch.from_numpy(img_resized).permute(2, 0, 1).float() / 255.0
+
+        return img_tensor, target_tensor

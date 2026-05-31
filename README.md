@@ -17,9 +17,14 @@ The models included are not intended to be state-of-the-art. They exist solely t
 Create and activate a virtual environment using your preferred tool (e.g. `venv`, `conda`, or `micromamba`), then install the project. Example using `micromamba`:
 
 ```bash
-micromamba create -n nn_2026_template python=3.12
-micromamba activate nn_2026_template
-pip install -e .
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+```windows
+py -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
 The `-e` flag installs the project in **editable mode** — instead of copying the source into `site-packages`, Python points directly at the `src/` directory. This means any changes you make to the source code take effect immediately without reinstalling.

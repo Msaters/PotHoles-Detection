@@ -1,7 +1,7 @@
 opencv-python
 seaborn
 torch
-kagglehub
+kagglehub==0.4.3
 ultralytics
 albumentations
 opencv-python

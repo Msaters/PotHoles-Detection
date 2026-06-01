@@ -1,7 +1,11 @@
+import sys
 import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+# Add project root to sys.path to resolve src imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import click
 import fiddle as fdl
@@ -21,7 +25,7 @@ if TYPE_CHECKING:
 @click.command()
 @click.argument("config_path", type=click.Path(exists=True, dir_okay=False, file_okay=True), required=False)
 @click.option("--resume_run_name", type=str, default=None)
-@click.option("--no_wandb", is_flag=True, default=False)
+@click.option("--no_wandb", is_flag=True, default=True)
 @click.option("--seed", type=int, default=42)
 def main(config_path, resume_run_name, no_wandb, seed):
     L.seed_everything(seed)

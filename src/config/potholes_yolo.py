@@ -6,9 +6,9 @@ from src.models.modules.potholes_yolo import PotholeYoloModule
 def build_config():
 
     model_cfg = fdl.Config(
-        PotholeYoloModule, 
-        lr=1e-3, 
-        model_cfg='yolov8n.pt',
+        PotholeYoloModule,
+        lr=1e-3,
+        model_cfg='yolov8n.yaml',
         num_classes=3
     )
     

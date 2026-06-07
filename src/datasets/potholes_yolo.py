@@ -50,7 +50,7 @@ class PotholeDataModuleYOLO(L.LightningDataModule):
             batch_size=self.batch_size, 
             collate_fn=self.collate_fn,
             shuffle=True,
-            num_workers=0
+            num_workers=8
         )
 
     def val_dataloader(self):

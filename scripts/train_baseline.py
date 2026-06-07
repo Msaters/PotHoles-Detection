@@ -69,15 +69,15 @@ def train_baseline():
         train_ds, 
         batch_size=BATCH_SIZE, 
         shuffle=True,
-        num_workers=0,
-        pin_memory=use_pin_memory
+        num_workers=8,
+        pin_memory=True
     )
     val_loader = DataLoader(
         val_ds,
         batch_size=BATCH_SIZE,
         shuffle=False,
-        num_workers=0,
-        pin_memory=use_pin_memory
+        num_workers=8,
+        pin_memory=True
     )
     
     print(f"Train samples: {len(train_ds)}, Val samples: {len(val_ds)}, Test samples: {len(test_ds)}")

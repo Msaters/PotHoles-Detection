@@ -7,10 +7,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import kagglehub
-from ultralytics.nn.tasks import DetectionModel
 from ultralytics import YOLO
 
-# Allow script execution from the scripts/ directory.
+# Upewnij się, że struktura importów pasuje do Twojego projektu
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.data_utils import parse_xmls, LABEL_MAP
@@ -18,30 +17,18 @@ from src.models.modules.potholes_yolo import PotholeYoloModule
 
 LABEL_NAMES = {v: k for k, v in LABEL_MAP.items()}
 
-DEFAULT_CKPT = Path('logs/pothole_yolo_detection_v1_20260601_190124/checkpoints/epoch=4-step=225.ckpt')
+# Lepiej podawać to z palca w konsoli, usunąłem sztywny DEFAULT_CKPT, bo zawsze będzie stary
 DEFAULT_OUTPUT_DIR = Path('outputs/yolo_report')
 
-
 def resolve_dataset_root():
-    cached = Path.home() / '.cache' / 'kagglehub' / 'datasets' / 'idanbaru' / 'annotated-potholes-with-severity-levels' / 'versions' / '1'
-    if cached.exists():
-        return cached
-    print('Dataset not found in KaggleHub cache. Downloading dataset...')
+    # Zostawmy to bibliotece kagglehub - sama sprawdzi cache i zwróci ścieżkę
+    print('Checking dataset via KaggleHub...')
     dataset_path = kagglehub.dataset_download('idanbaru/annotated-potholes-with-severity-levels')
     return Path(dataset_path)
 
-
-def get_predictions(model: DetectionModel, image_path: Path, conf: float = 0.1, max_det: int = 100):
-    # Support both YOLO wrapper (predict(source=...,...)) and DetectionModel.predict(x)
-    try:
-        results = model.predict(source=str(image_path), conf=conf, max_det=max_det, verbose=False)
-    except TypeError:
-        # DetectionModel.predict signature expects positional 'x' as image array/tensor
-        import cv2 as _cv2
-        img = _cv2.imread(str(image_path))
-        if img is None:
-            return []
-        results = model.predict(img)
+def get_predictions(model: YOLO, image_path: Path, conf: float = 0.1, max_det: int = 100):
+    # Skoro teraz 'model' to obiekt YOLO (wrapper), możemy używać cudownego API Ultralytics
+    results = model.predict(source=str(image_path), conf=conf, max_det=max_det, verbose=False)
 
     if len(results) == 0:
         return []
@@ -50,19 +37,8 @@ def get_predictions(model: DetectionModel, image_path: Path, conf: float = 0.1, 
     if boxes is None or len(boxes.data) == 0:
         return []
 
+    # Format z YOLO: [x1, y1, x2, y2, conf, cls]
     data = boxes.data.cpu().numpy()
-    # data layout: x1, y1, x2, y2, score, cls
-    # apply conf and max_det filtering in case DetectionModel.predict ignored them
-    if data.shape[1] >= 5:
-        scores = data[:, 4]
-        keep_mask = scores >= conf
-        data = data[keep_mask]
-
-    if data.shape[0] > 0:
-        # sort by score desc and limit to max_det
-        order = (-data[:, 4]).argsort()
-        order = order[:max_det]
-        data = data[order]
 
     predictions = []
     for row in data:
@@ -77,7 +53,6 @@ def get_predictions(model: DetectionModel, image_path: Path, conf: float = 0.1, 
             'label': LABEL_NAMES.get(int(cls), str(int(cls)))
         })
     return predictions
-
 
 def draw_boxes(image: np.ndarray, boxes, color, label_prefix=None):
     for box in boxes:
@@ -95,7 +70,6 @@ def draw_boxes(image: np.ndarray, boxes, color, label_prefix=None):
             cv2.rectangle(image, (x1, y1 - txt_size[1] - 6), (x1 + txt_size[0] + 4, y1), color, -1)
             cv2.putText(image, text, (x1 + 2, y1 - 4), font, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
 
-
 def build_comparison_image(image_path: Path, gt_boxes, pred_boxes):
     image = cv2.imread(str(image_path))
     if image is None:
@@ -112,7 +86,6 @@ def build_comparison_image(image_path: Path, gt_boxes, pred_boxes):
     combined = np.concatenate([gt_image, pred_image], axis=1)
     return combined
 
-
 def make_gt_boxes(df: pd.DataFrame, image_path: Path):
     rows = df[df['file'] == str(image_path)]
     boxes = []
@@ -127,6 +100,53 @@ def make_gt_boxes(df: pd.DataFrame, image_path: Path):
         })
     return boxes
 
+def plot_metrics_summary(metrics, output_path="metrics_summary.png"):
+    # 1. Przygotowanie danych do lewego wykresu (liczności)
+    counts_labels = ['True Pos.\n(Trafione)', 'False Pos.\n(Zmyślone)', 'False Neg.\n(Pominięte)']
+    counts_values = [metrics['tp'], metrics['fp'], metrics['fn']]
+    counts_colors = ['#4caf50', '#f44336', '#ff9800'] # Zielony, Czerwony, Pomarańczowy
+
+    # 2. Przygotowanie danych do prawego wykresu (metryki 0-1)
+    rates_labels = ['Precision', 'Recall', 'F1 Score', 'Accuracy']
+    rates_values = [metrics['precision'], metrics['recall'], metrics['f1'], metrics['accuracy']]
+    rates_colors = ['#2196f3', '#9c27b0', '#00bcd4', '#607d8b'] # Niebieski, Fioletowy, Cyjan, Szary
+
+    # Tworzymy płótno z dwoma wykresami obok siebie
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    fig.suptitle(f"Podsumowanie detekcji (Przeanalizowano obrazów: {metrics['images_evaluated']})", 
+                 fontsize=16, fontweight='bold', y=1.02)
+
+    # --- LEWY WYKRES (Liczby całkowite) ---
+    bars1 = ax1.bar(counts_labels, counts_values, color=counts_colors, edgecolor='black', alpha=0.85)
+    ax1.set_title("Bezwzględna liczba detekcji", fontsize=14, pad=15)
+    ax1.set_ylabel("Ilość obiektów", fontsize=12)
+    ax1.grid(axis='y', linestyle='--', alpha=0.5)
+    ax1.set_ylim(0, max(counts_values) * 1.15) # Zostawiamy miejsce nad najwyższym słupkiem
+
+    # Dodawanie konkretnych liczb na czubkach słupków
+    for bar in bars1:
+        yval = bar.get_height()
+        ax1.text(bar.get_x() + bar.get_width()/2, yval + (max(counts_values)*0.02), 
+                 int(yval), ha='center', va='bottom', fontweight='bold', fontsize=12)
+
+    # --- PRAWY WYKRES (Wyniki procentowe / proporcje) ---
+    bars2 = ax2.bar(rates_labels, rates_values, color=rates_colors, edgecolor='black', alpha=0.85)
+    ax2.set_title("Metryki skuteczności (0.0 - 1.0)", fontsize=14, pad=15)
+    ax2.set_ylabel("Wynik", fontsize=12)
+    ax2.set_ylim(0, 1.15) 
+    ax2.grid(axis='y', linestyle='--', alpha=0.5)
+
+    # Dodawanie konkretnych ułamków na czubkach słupków
+    for bar in bars2:
+        yval = bar.get_height()
+        ax2.text(bar.get_x() + bar.get_width()/2, yval + 0.02, 
+                 f"{yval:.4f}", ha='center', va='bottom', fontweight='bold', fontsize=12)
+
+    # Zapis i formatowanie
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"✅ Wygenerowano wykres i zapisano jako: {os.path.abspath(output_path)}")
 
 def save_dataset_summary(df: pd.DataFrame, output_dir: Path):
     labels = df['label'].map(lambda v: LABEL_NAMES.get(int(v), str(int(v))))
@@ -142,7 +162,6 @@ def save_dataset_summary(df: pd.DataFrame, output_dir: Path):
     fig.savefig(path, dpi=150)
     plt.close(fig)
     return path
-
 
 def iou(box_a, box_b):
     xA = max(box_a['x1'], box_b['x1'])
@@ -161,14 +180,12 @@ def iou(box_a, box_b):
         return 0.0
     return inter_area / union_area
 
-
 def compute_image_detection_metrics(gt_boxes, pred_boxes, iou_threshold=0.5):
     if len(gt_boxes) == 0 and len(pred_boxes) == 0:
         return 0, 0, 0
 
     matched = [False] * len(gt_boxes)
-    tp = 0
-    fp = 0
+    tp = fp = 0
 
     for pred in sorted(pred_boxes, key=lambda x: x['score'], reverse=True):
         best_iou = 0.0
@@ -189,7 +206,6 @@ def compute_image_detection_metrics(gt_boxes, pred_boxes, iou_threshold=0.5):
 
     fn = int(sum(1 for matched_flag in matched if not matched_flag))
     return tp, fp, fn
-
 
 def compute_dataset_metrics(all_gt, all_pred, iou_threshold=0.5):
     tp = fp = fn = 0
@@ -214,7 +230,6 @@ def compute_dataset_metrics(all_gt, all_pred, iou_threshold=0.5):
         'images_evaluated': len(all_gt),
     }
 
-
 def save_metrics_report(metrics, output_dir: Path):
     lines = [
         f"Images evaluated: {metrics['images_evaluated']}",
@@ -230,7 +245,6 @@ def save_metrics_report(metrics, output_dir: Path):
     with open(path, 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines))
     return path
-
 
 def save_heatmap(centers, output_dir: Path, img_size=(640, 640), bins=64):
     if len(centers) == 0:
@@ -253,12 +267,10 @@ def save_heatmap(centers, output_dir: Path, img_size=(640, 640), bins=64):
     plt.close(fig)
     return path
 
-
 def find_metrics_csv(run_dir: Path):
     for candidate in run_dir.rglob('metrics.csv'):
         return candidate
     return None
-
 
 def save_loss_curve(metrics_csv: Path, output_dir: Path):
     df = pd.read_csv(metrics_csv)
@@ -268,7 +280,9 @@ def save_loss_curve(metrics_csv: Path, output_dir: Path):
 
     fig, ax = plt.subplots(figsize=(8, 4))
     for col in loss_columns:
-        ax.plot(df[col], label=col)
+        # Usuwamy wartości NaN, które Lightning zostawia w metrics.csv (bo val_loss i train_loss są logowane w innych krokach)
+        valid_data = df[col].dropna()
+        ax.plot(valid_data.index, valid_data.values, label=col)
     ax.set_title('Loss curve')
     ax.set_xlabel('Step or epoch index')
     ax.set_ylabel('Loss')
@@ -283,7 +297,7 @@ def save_loss_curve(metrics_csv: Path, output_dir: Path):
 
 def main():
     parser = argparse.ArgumentParser(description='Generate YOLO inference report for pothole detection.')
-    parser.add_argument('--checkpoint', type=Path, default=DEFAULT_CKPT, help='YOLO Lightning checkpoint path')
+    parser.add_argument('--checkpoint', type=Path, required=True, help='Path to YOLO Lightning checkpoint (.ckpt)')
     parser.add_argument('--samples', type=int, default=5, help='Number of sample images to visualize')
     parser.add_argument('--output', type=Path, default=DEFAULT_OUTPUT_DIR, help='Directory to save generated outputs')
     parser.add_argument('--conf', type=float, default=0.1, help='Confidence threshold for predictions')
@@ -301,19 +315,13 @@ def main():
     df = parse_xmls(str(dataset_root))
     save_dataset_summary(df, output_dir)
 
-    model = PotholeYoloModule.load_from_checkpoint(str(args.checkpoint))
-    model.eval()
+    print(f"Loading weights from: {args.checkpoint}")
+    pl_module = PotholeYoloModule.load_from_checkpoint(str(args.checkpoint))
+    pl_module.eval()
 
-    # For inference prefer the YOLO wrapper when the original config was a .pt file
-    inference_model = None
-    cfg = getattr(model.hparams, 'model_cfg', None)
-    if isinstance(cfg, str) and cfg.endswith('.pt'):
-        inference_model = YOLO(cfg)
-    else:
-        inference_model = model.model
-
-    if not hasattr(inference_model, 'predict'):
-        raise RuntimeError('Loaded model has no predict() method. Provide a model with a predict API.')
+    # MAGIA: Bierzemy architekturę od YOLO, i po cichu wstrzykujemy jej wytrenowane parametry
+    inference_model = YOLO('yolov8n.yaml')
+    inference_model.model = pl_module.model
 
     unique_images = [Path(img) for img in sorted(df['file'].unique())]
     existing_images = [img for img in unique_images if img.exists()]
@@ -326,9 +334,11 @@ def main():
     heatmap_centers = []
     prediction_counts = []
 
+    print("Running inference on all images... This might take a moment.")
     for image_path in existing_images:
         gt_boxes = make_gt_boxes(df, image_path)
         pred_boxes = get_predictions(inference_model, image_path, conf=args.conf, max_det=args.max_det)
+        
         all_gt.append(gt_boxes)
         all_pred.append(pred_boxes)
         prediction_counts.append(len(pred_boxes))
@@ -338,10 +348,15 @@ def main():
     report_path = save_metrics_report(metrics, output_dir)
     print('Saved detection metrics:', report_path)
 
+    # Generowanie graficznego podsumowania
+    chart_path = output_dir / 'metrics_summary_chart.png'
+    plot_metrics_summary(metrics, output_path=str(chart_path))
+
     heatmap_path = save_heatmap(heatmap_centers, output_dir)
     if heatmap_path is not None:
         print('Saved prediction heatmap:', heatmap_path)
 
+    # Próba znalezienia wykresów lossów (z folderu wyżej)
     run_dir = args.checkpoint.parent.parent
     metrics_csv = find_metrics_csv(run_dir)
     if metrics_csv is not None:
@@ -351,6 +366,7 @@ def main():
     else:
         print('No metrics.csv found under', run_dir)
 
+    print("Generating sample visualization images...")
     for idx, image_path in enumerate(sample_images, start=1):
         gt_boxes = make_gt_boxes(df, image_path)
         pred_boxes = get_predictions(inference_model, image_path, conf=args.conf, max_det=args.max_det)
@@ -364,7 +380,7 @@ def main():
         for image_path, count in zip(existing_images, prediction_counts):
             f.write(f'{Path(image_path).name}: {count}\n')
     print('Saved prediction counts:', counts_path)
-    print('Generated report in:', output_dir)
+    print('\n✅ Generated report in:', output_dir)
 
 if __name__ == '__main__':
     main()

@@ -13,13 +13,13 @@ import lightning as L
 from fiddle.codegen import codegen
 from fiddle.printing import as_dict_flattened
 
+from lightning.pytorch.loggers import CSVLogger
 import wandb
 from src.config.constants import WANDB_ENTITY, WANDB_PROJECT
 from src.utils.config import get_wandb_config, parse_fiddle_config
 
 if TYPE_CHECKING:
     from lightning.pytorch.loggers import Logger
-
     from src.config.schemas import ExperimentConfig
 
 @click.command()
@@ -70,7 +70,16 @@ def main(config_path, resume_run_name, no_wandb, seed):
     checkpoint_callback = partial_checkpoint_callback(dirpath=log_dir) if partial_checkpoint_callback is not None else None
     callbacks = built_cfg.training_cfg.callbacks + ([checkpoint_callback] if checkpoint_callback is not None else [])
 
+    # =========================================================
+    # LOGGERS SETUP
+    # =========================================================
     logger: list[Logger] = []
+    
+    # ZAWSZE dodajemy lokalny CSVLogger. Zapisze on plik metrics.csv
+    # w strukturze: logs/nazwa_runu/version_X/metrics.csv
+    csv_logger = CSVLogger(save_dir="logs", name=run_name)
+    logger.append(csv_logger)
+
     partial_wandb_logger = built_cfg.training_cfg.wandb_logger
     if partial_wandb_logger is not None and not no_wandb:
         # id ties this run to its W&B entry — required for resumption.
@@ -116,12 +125,12 @@ def main(config_path, resume_run_name, no_wandb, seed):
         default_root_dir=log_dir,
         callbacks=callbacks,
     )
+    
     trainer.fit(
         model=model,
         datamodule=data_module,
         ckpt_path=ckpt_path,
     )
-
 
 if __name__ == "__main__":
     main()

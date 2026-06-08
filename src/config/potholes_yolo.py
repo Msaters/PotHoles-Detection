@@ -20,7 +20,7 @@ def build_config():
     
     training_cfg = fdl.Config(
         schemas.TrainingConfig,
-        max_epochs=5,
+        max_epochs=15,
         wandb_logger=None,
         checkpoint_callback=None,
         callbacks=[]

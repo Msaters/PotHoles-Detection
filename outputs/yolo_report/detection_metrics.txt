@@ -1,8 +1,8 @@
 Images evaluated: 700
-True positives: 911
-False positives: 1273
-False negatives: 861
-Precision: 0.4171
-Recall: 0.5141
-F1 score: 0.4606
-Detection accuracy: 0.2992
+True positives: 1510
+False positives: 1147
+False negatives: 262
+Precision: 0.5683
+Recall: 0.8521
+F1 score: 0.6819
+Detection accuracy: 0.5173

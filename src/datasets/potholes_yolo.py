@@ -9,6 +9,9 @@ from albumentations.pytorch import ToTensorV2
 
 from src.data_utils import parse_xmls 
 
+# ==========================================
+# 1. DATASET (Przetwarzanie pojedynczych obrazów)
+# ==========================================
 class PotholeDatasetYolo(torch.utils.data.Dataset):
     def __init__(self, df, img_size: int = 640, is_train: bool = True):
         self.df = df
@@ -16,11 +19,11 @@ class PotholeDatasetYolo(torch.utils.data.Dataset):
         self.img_size = img_size
         self.is_train = is_train
 
-        # Transformacje dla zbioru TRENINGOWEGO
+        # NAPRAWA WARNINGA: Zmiana `value=0` na `fill=0` i `border_mode=0`
         if self.is_train:
             self.transform = A.Compose([
                 A.LongestMaxSize(max_size=img_size),
-                A.PadIfNeeded(min_height=img_size, min_width=img_size, border_mode=cv2.BORDER_CONSTANT, value=0),
+                A.PadIfNeeded(min_height=img_size, min_width=img_size, border_mode=0, fill=0),
                 A.HorizontalFlip(p=0.5), 
                 A.RandomBrightnessContrast(p=0.5), 
                 A.MotionBlur(p=0.2), 
@@ -29,11 +32,10 @@ class PotholeDatasetYolo(torch.utils.data.Dataset):
                 ToTensorV2()
             ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=['class_labels']))
             
-        # Transformacje dla zbioru WALIDACYJNEGO (tylko dopasowanie rozmiaru)
         else:
             self.transform = A.Compose([
                 A.LongestMaxSize(max_size=img_size),
-                A.PadIfNeeded(min_height=img_size, min_width=img_size, border_mode=cv2.BORDER_CONSTANT, value=0),
+                A.PadIfNeeded(min_height=img_size, min_width=img_size, border_mode=0, fill=0),
                 A.Normalize(mean=(0.0, 0.0, 0.0), std=(1.0, 1.0, 1.0), max_pixel_value=255.0),
                 ToTensorV2()
             ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=['class_labels']))
@@ -47,24 +49,37 @@ class PotholeDatasetYolo(torch.utils.data.Dataset):
         img = cv2.imread(img_path)
         if img is None:
             img = np.zeros((self.img_size, self.img_size, 3), dtype=np.uint8)
+            orig_h, orig_w = self.img_size, self.img_size
         else:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            orig_h, orig_w = img.shape[:2]
 
         img_data = self.df[self.df["file"] == img_path]
         
         bboxes = []
         labels = []
         for _, row in img_data.iterrows():
-            bboxes.append([float(row['xmin']), float(row['ymin']), float(row['xmax']), float(row['ymax'])])
-            labels.append(int(row['label']))
+            xmin, ymin, xmax, ymax = float(row['xmin']), float(row['ymin']), float(row['xmax']), float(row['ymax'])
 
-        # Nakładanie augmentacji
-        transformed = self.transform(image=img, bboxes=bboxes, class_labels=labels)
+            # Obcinanie ramek wychodzących poza ekran
+            xmin = max(0.0, min(float(orig_w), xmin))
+            ymin = max(0.0, min(float(orig_h), ymin))
+            xmax = max(0.0, min(float(orig_w), xmax))
+            ymax = max(0.0, min(float(orig_h), ymax))
+
+            if xmax > xmin and ymax > ymin:
+                bboxes.append([xmin, ymin, xmax, ymax])
+                labels.append(int(row['label']))
+
+        if len(bboxes) == 0:
+            transformed = self.transform(image=img, bboxes=[], class_labels=[])
+        else:
+            transformed = self.transform(image=img, bboxes=bboxes, class_labels=labels)
+            
         img_tensor = transformed['image']
         transformed_bboxes = transformed['bboxes']
         transformed_labels = transformed['class_labels']
 
-        # Konwersja na format YOLO
         yolo_targets = []
         for bbox, cls_id in zip(transformed_bboxes, transformed_labels):
             xmin, ymin, xmax, ymax = bbox
@@ -82,6 +97,9 @@ class PotholeDatasetYolo(torch.utils.data.Dataset):
         return img_tensor, target_tensor
 
 
+# ==========================================
+# 2. DATA MODULE (Integracja z PyTorch Lightning i Fiddle)
+# ==========================================
 class PotholeDataModuleYOLO(L.LightningDataModule):
     def __init__(self, batch_size: int = 16, img_size: int = 640):
         super().__init__()
@@ -90,14 +108,11 @@ class PotholeDataModuleYOLO(L.LightningDataModule):
         self.data_path = None
 
     def prepare_data(self):
-        # Pobieranie danych (wykona się tylko raz, na jednym procesie)
         self.data_path = kagglehub.dataset_download("idanbaru/annotated-potholes-with-severity-levels")
 
     def setup(self, stage=None):
-        # Parsowanie XML
         df = parse_xmls(self.data_path)        
         
-        # Prosty podział zbioru na treningowy (80%) i walidacyjny (20%)
         images = df['file'].unique()
         split_idx = int(len(images) * 0.8)
         
@@ -107,16 +122,11 @@ class PotholeDataModuleYOLO(L.LightningDataModule):
         df_train = df[df['file'].isin(train_images)]
         df_val = df[df['file'].isin(val_images)]
         
-        # Tworzenie datasetów (is_train steruje augmentacjami)
         self.train_ds = PotholeDatasetYolo(df_train, img_size=self.img_size, is_train=True)
         self.val_ds = PotholeDatasetYolo(df_val, img_size=self.img_size, is_train=False)
 
     def collate_fn(self, batch):
-        """
-        Łączy pojedyncze przykłady w batch, którego spodziewa się v8DetectionLoss.
-        """
         images, targets = zip(*batch)
-        
         images = torch.stack(images)
         
         new_targets = []
@@ -142,7 +152,7 @@ class PotholeDataModuleYOLO(L.LightningDataModule):
             batch_size=self.batch_size, 
             collate_fn=self.collate_fn,
             shuffle=True,
-            num_workers=4, # Zmniejsz do 0 jeśli trenujesz na Windowsie i rzuca błędami "BrokenPipe"
+            num_workers=4, 
             pin_memory=True
         )
 
